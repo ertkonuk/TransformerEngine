@@ -15,6 +15,12 @@
 #include "gdrapi.h"
 #include <stdexcept>
 
+#ifdef NCCLBOOTSTRAP
+#include <nccl.h>
+#else
+#include <mpi.h>
+#endif
+
 #define NVTE_MAX_REGIONS 16
 #define NVTE_MAX_SMS 32
 #define NVTE_MAX_OPS 32
@@ -139,9 +145,22 @@ struct communicator {
   int padding2[15];
   volatile int tail;
 
-  MPI_Request mpihndl[NVTE_MAX_SHARP];
-  MPI_Comm comm_inter,  // reduction group communicator (subset of the nodes) along GPU rail
-      comm_intra;       // full intranode (all ndev GPUS)
+  #ifdef NOSHARP
+   //MPI_Request mpihndl[NVTE_MAX_SHARP];
+   //MPI_Request mpihndl[MAX_SHARP];
+  #else
+      void *sharphndl[MAX_SHARP];
+  #endif
+
+  #ifdef NCCLBOOTSTRAP
+      ncclComm_t comm_world,comm_intra,comm_inter;
+  #else
+      MPI_Comm 
+      comm_world, //clone of MPI_COMM_WORLD
+      comm_inter, //reduction group communicator (subset of the nodes) along GPU rail
+      comm_intra; //full intranode (all ndev GPUS)
+  #endif
+
   int ibnvsize;  // can be used to fake smaller or larger nvlink domain to use ib instead of nvlink
                  // or force MNNVL
   int *send_id, *recv_id;
@@ -151,12 +170,29 @@ typedef struct communicator communicator;
 
 void producer(void *atomic_ptr, int chunk_i, cudaStream_t stream);
 void consumer(void *atomic_ptr, int chunk_i, cudaStream_t stream);
-int create_communicator(communicator **comm);
-/*  creates communicator, allocates all internal buffers if necessary */
 
-int create_communicator_grouped(communicator **comm, int pipegpus, int pipenodes);
-int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenodes, int tensorgpus,
-                                 int tensornodes);
+struct communicator {
+ };
+ typedef struct communicator communicator;
+ 
+int create_communicator( communicator** comm
+#ifdef NCCLBOOTSTRAP
+,ncclComm_t comm_world
+#endif
+);
+
+/*  creates communicator, allocates all internal buffers if necessary */
+int create_communicator_grouped( communicator** comm, int pipegpus, int pipenodes
+#ifdef NCCLBOOTSTRAP
+,ncclComm_t comm_world
+#endif
+);
+int create_communicator_grouped2( communicator** comm, int pipegpus, int pipenodes, int tensorgpus, int tensornodes
+#ifdef NCCLBOOTSTRAP
+,ncclComm_t comm_world
+#endif
+);
+
 /*  creates communicator with
     allreduce1 to happen in datagpus x datanodes groups,
     allreduce2 to happen in tensorgpus x tensor nodes,

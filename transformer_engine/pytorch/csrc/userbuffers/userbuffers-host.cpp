@@ -12,12 +12,40 @@
 #include <immintrin.h>
 #include <iostream>
 #include <math.h>
-#include <mpi.h>
 #include <sched.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <x86intrin.h>
+
+#define NCCLBOOTSTRAP
+
+#ifdef NCCLBOOTSTRAP
+inline void ub_barrier(ncclComm_t c) {
+  void* dummy;
+  cudaMalloc(&dummy,4);
+  ncclAllreduce(dummy,dummy,1, ncclInt, ncclSum, c);
+  cudaDeviceSynchronize();
+  cudaFree(dummy);
+}
+#else
+inline void ub_barrier(MPI_Comm c) {
+  MPI_Barrier(c);
+}
+#endif
+
+#ifdef MULTINODE
+int noproxy=0;
+#if defined(__x86_64__) || defined(_M_X64)
+void inline store_fence() {
+#include <sched.h>
+#include <math.h>
+void* proxythread(void* c);
+#ifndef NOSHARP
+static int oob_bcast(void *comm_context, void *buf, int size, int root) {
+	MPI_Bcast(buf, size, MPI_BYTE, root, ((communicator*)comm_context)->comm_inter);
+	return 0;
+}
 
 static int oob_bcast(void *comm_context, void *buf, int size, int root) {
   MPI_Bcast(buf, size, MPI_BYTE, root,
@@ -26,7 +54,7 @@ static int oob_bcast(void *comm_context, void *buf, int size, int root) {
 }
 
 static int oob_barrier(void *comm_context) {
-  MPI_Barrier((reinterpret_cast<communicator *>(comm_context))->comm_inter);
+  ub_barrier((reinterpret_cast<communicator *>(comm_context))->comm_inter);
   return 0;
 }
 
@@ -83,8 +111,17 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
   *comm = reinterpret_cast<communicator *>(malloc(sizeof(communicator)));
 
   int myrank, nranks, cur_dev, ndev;
+ #ifdef NCCLBOOTSTRAP
+  #define MPI_MAX_PROCESSOR_NAME 1024
+  (*comm)->comm_world=comm_world;
+  ncclCommUserRank(comm_world, &myrank);
+  ncclCommUserCount(comm_world, &nranks);
+#else
+  MPI_Comm_dup(MPI_COMM_WORLD,&(*comm)->comm_world);
   MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
   MPI_Comm_size(MPI_COMM_WORLD, &nranks);
+#endif
+
   (*comm)->nranks = nranks;
   (*comm)->myrank = myrank;
   (*comm)->free_region = 0;
@@ -110,33 +147,51 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
     (*comm)->active_req[i].active = -1;
 
   int ret = 0;
-  // split communicator
+  //split communicator
+  int namelen,bytes,color,my_node,mylocal,numlocal,num_nodes;
+  int rank=(*comm)->myrank,size=(*comm)->nranks;
   char host_name[MPI_MAX_PROCESSOR_NAME];
-  char(*host_names)[MPI_MAX_PROCESSOR_NAME];
-  int namelen, bytes, color, my_node, mylocal, numlocal, num_nodes;
-  int rank = (*comm)->myrank, size = (*comm)->nranks;
-  MPI_Get_processor_name(host_name, &namelen);
+  char (*host_names)[MPI_MAX_PROCESSOR_NAME];
   bytes = size * sizeof(char[MPI_MAX_PROCESSOR_NAME]);
-  host_names = (char(*)[MPI_MAX_PROCESSOR_NAME])malloc(bytes);
-  strcpy(host_names[rank], host_name);  // NOLINT(*)
-  for (int n = 0; n < size; n++)
-    MPI_Bcast(&(host_names[n]), MPI_MAX_PROCESSOR_NAME, MPI_CHAR, n, MPI_COMM_WORLD);
-  qsort(host_names, size, sizeof(char[MPI_MAX_PROCESSOR_NAME]), stringCmp);
 
-  color = 0;
-  for (int n = 0; n < size; n++) {
-    if (n > 0 && strcmp(host_names[n - 1], host_names[n]))
-      color++;
-    if (strcmp(host_name, host_names[n]) == 0)
-      break;
-  }
-  free(host_names);
+#ifdef NCCLBOOTSTRAP
+  gethostname(hostname, MPI_MAX_PROCESSOR_NAME);
+  cudaMallocHost(&host_names,bytes);
+  strcpy(host_names[rank], host_name);
+  ncclAllGather(((const void*)host_names)+rank*MPI_MAX_PROCESSOR_NAME, (void*)host_names,MPI_MAX_PROCESSOR_NAME, ncclChar,comm_world);
+  cudaDeviceSynchronize();
+#else
+ 	host_names = (char (*)[MPI_MAX_PROCESSOR_NAME]) malloc(bytes);
+  MPI_Get_processor_name(host_name,&namelen);
+ 	strcpy(host_names[rank], host_name);
+ 	for (int n=0; n<size; n++)
+ 		MPI_Bcast(&(host_names[n]),MPI_MAX_PROCESSOR_NAME, MPI_CHAR, n, MPI_COMM_WORLD);
+#endif
+ 	qsort(host_names, size, sizeof(char[MPI_MAX_PROCESSOR_NAME]), stringCmp);
+  
+ 	color = 0;
+ 	for (int n=0; n<size; n++)  {
+   		if(n>0 && strcmp(host_names[n-1], host_names[n])) color++;
+   		if(strcmp(host_name, host_names[n]) == 0) break;
+ 	}
 
   MPI_Comm_split(MPI_COMM_WORLD, color, rank, &(*comm)->comm_intra);
   // find intranode numbers and make internode communicator
   // figure out mylocal
-  MPI_Comm_rank((*comm)->comm_intra, &mylocal);
-  MPI_Comm_size((*comm)->comm_intra, &numlocal);
+  #ifdef NCCLBOOTSTRAP
+    cudaFreeHost(host_names);
+    ncclCommSplit(comm_world,color,rank,&(*comm)->comm_intra,NULL);
+    ncclCommUserRank((*comm)->comm_intra, &mylocal);
+    ncclCommUserCount((*comm)->comm_intra, &numlocal);
+  #else
+  	free(host_names);
+  	MPI_Comm_split(MPI_COMM_WORLD, color, rank, &(*comm)->comm_intra);
+  	//find intranode numbers and make internode communicator
+    //figure out mylocal
+  	MPI_Comm_rank( (*comm)->comm_intra, &mylocal );
+    MPI_Comm_size( (*comm)->comm_intra, &numlocal );
+  #endif
+
   (*comm)->nvrank = mylocal;
   (*comm)->nvsize = numlocal;
 
@@ -199,13 +254,19 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
   int datanodegroup_id =
       myrank / numlocal / datanodes;  // data reduction group node belongs, equals 0 for all if both
                                       // pipenodes=1 and tensornodes=1
-  // mpi communicator only needed for SHARP which is always
-  // allreduce1/data-parallel
-  MPI_Comm_split(MPI_COMM_WORLD, mylocal + numlocal * datanodegroup_id, rank, &(*comm)->comm_inter);
-  // different rails from same group are in different subcommunicators
+  // mpi communicator only needed for SHARP which is always allreduce1/data-parallel
+ #ifdef NCCLBOOTSTRAP
+   ncclCommSplit(comm_world,mylocal + numlocal * datanodegroup_id,rank,&(*comm)->comm_inter,NULL);
+   ncclCommUserRank((*comm)->comm_inter, &my_node);
+   ncclCommUserCount((*comm)->comm_inter, &num_nodes);
+ #else
+ 	MPI_Comm_split(MPI_COMM_WORLD, mylocal + numlocal * datanodegroup_id, rank, &(*comm)->comm_inter);
+   //different rails from same group are in different subcommunicators
+ 
+ 	MPI_Comm_size( (*comm)->comm_inter, &num_nodes );
+ 	MPI_Comm_rank( (*comm)->comm_inter, &my_node );
+ #endif
 
-  MPI_Comm_size((*comm)->comm_inter, &num_nodes);
-  MPI_Comm_rank((*comm)->comm_inter, &my_node);
   (*comm)->first_node = mynode - my_node;
   (*comm)->num_nodes = num_nodes;
   (*comm)->my_node = my_node;
@@ -331,13 +392,29 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
 
   return 0;
 }
-int create_communicator_grouped(communicator **comm, int pipegpus, int pipenodes) {
-  return create_communicator_grouped2(comm, pipegpus, pipenodes, 1, 1);
-}
 
-int create_communicator(communicator **comm) {
-  return create_communicator_grouped2(comm, 1, 1, 1, 1);
-}
+int create_communicator_grouped( communicator** comm, int pipegpus, int pipenodes
+#ifdef NCCLBOOTSTRAP
+,ncclComm_t comm_world
+#endif
+) 
+{ return create_communicator_grouped2(comm,pipegpus,pipenodes,1,1
+#ifdef NCCLBOOTSTRAP
+,comm_world
+#endif
+); }
+
+int create_communicator( communicator** comm 
+#ifdef NCCLBOOTSTRAP
+,ncclComm_t comm_world
+#endif
+) {
+  return create_communicator_grouped2(comm,1,1,1,1
+#ifdef NCCLBOOTSTRAP
+,comm_world
+#endif
+  );
+ }
 
 void destroy_communicator(communicator *comm) {
   comm->activeproxy = 0;
@@ -345,6 +422,18 @@ void destroy_communicator(communicator *comm) {
     printf("waiting for userbuffers proxy thread to exit()\n");
   gdr_close(comm->g);
 }
+
+ void destroy_communicator(communicator* comm) {
+ #ifdef MULTINODE
+   comm->activeproxy=0;
+  if(alloc) {
+ 
+   NCCLCHECK(ncclIpcSocketInit(&ipcSock, myrank, (uint64_t)opId, &abortFlag));
+   for(int p=1;p<nranks;p++) {
+     ub_barrier(comm->comm_intra);
+     NCCLCHECKGOTO(ncclIpcSocketSendFd(&ipcSock, peerfd[myrank], (myrank+p)%nranks, (uint64_t)opId), ret, error);
+     NCCLCHECKGOTO(ncclIpcSocketRecvFd(&ipcSock, &peerfd[(myrank+nranks-p)%nranks]), ret, error);
+   }
 
 int register_user_buffer_collective(void **gpubuff, size_t bytes, communicator *comm, bool alloc) {
   if (comm->free_region > NVTE_MAX_REGIONS)
@@ -360,8 +449,28 @@ int register_user_buffer_collective(void **gpubuff, size_t bytes, communicator *
       reinterpret_cast<cudaIpcMemHandle_t *>(malloc(sizeof(cudaIpcMemHandle_t) * (comm->nvsize)));
 
   CUDACHECK(cudaIpcGetMemHandle(&memhndl[comm->nvrank], *gpubuff));
+
+  #ifdef NCCLBOOTSTRAP
+    // Allocate device memory for the IPC memory handles
+    cudaIpcMemHandle_t *d_memhndl;
+    CUDACHECK(cudaMalloc(&d_memhndl, comm->nvsize * sizeof(cudaIpcMemHandle_t)));
+
+    // Copy the local IPC memory handle to device memory
+    CUDACHECK(cudaMemcpy(&d_memhndl[comm->nvrank], &memhndl[comm->nvrank], sizeof(cudaIpcMemHandle_t), cudaMemcpyHostToDevice));
+
+    // Perform the all-gather operation
+    NCCLCHECK(ncclAllGather(&d_memhndl[comm->nvrank], d_memhndl, sizeof(cudaIpcMemHandle_t) / sizeof(int8_t), ncclInt8, comm->comm_intra, 0));
+
+    // Copy the gathered IPC memory handles back to host memory
+    CUDACHECK(cudaMemcpy(memhndl, d_memhndl, comm->nvsize * sizeof(cudaIpcMemHandle_t), cudaMemcpyDeviceToHost));
+
+    // Free the device memory
+    CUDACHECK(cudaFree(d_memhndl));
+  #else 
   MPI_Allgather(&memhndl[comm->nvrank], sizeof(cudaIpcMemHandle_t), MPI_BYTE, memhndl,
                 sizeof(cudaIpcMemHandle_t), MPI_BYTE, comm->comm_intra);
+  #endif
+  
   for (int i = 0; i < comm->nvsize; i++)
     if (i != comm->nvrank)
       CUDACHECK(cudaIpcOpenMemHandle((void **)&(comm->peer_ptr[hndl][i]),  // NOLINT(*)
