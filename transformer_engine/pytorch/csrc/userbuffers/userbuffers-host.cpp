@@ -34,14 +34,6 @@ inline void ub_barrier(MPI_Comm c) {
 }
 #endif
 
-#ifdef MULTINODE
-int noproxy=0;
-#if defined(__x86_64__) || defined(_M_X64)
-void inline store_fence() {
-#include <sched.h>
-#include <math.h>
-void* proxythread(void* c);
-#ifndef NOSHARP
 static int oob_bcast(void *comm_context, void *buf, int size, int root) {
 	MPI_Bcast(buf, size, MPI_BYTE, root, ((communicator*)comm_context)->comm_inter);
 	return 0;
@@ -249,7 +241,7 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
   int pipenodegroup_id = myrank / numlocal / (datanodes * tensornodes);
 
   (*comm)->pipe_id = pipegpus * pipenodegroup_id + mylocal / (datagpus * tensorgpus);
-
+  
   CUDACHECK(cudaFree(0));
   int datanodegroup_id =
       myrank / numlocal / datanodes;  // data reduction group node belongs, equals 0 for all if both
@@ -422,18 +414,6 @@ void destroy_communicator(communicator *comm) {
     printf("waiting for userbuffers proxy thread to exit()\n");
   gdr_close(comm->g);
 }
-
- void destroy_communicator(communicator* comm) {
- #ifdef MULTINODE
-   comm->activeproxy=0;
-  if(alloc) {
- 
-   NCCLCHECK(ncclIpcSocketInit(&ipcSock, myrank, (uint64_t)opId, &abortFlag));
-   for(int p=1;p<nranks;p++) {
-     ub_barrier(comm->comm_intra);
-     NCCLCHECKGOTO(ncclIpcSocketSendFd(&ipcSock, peerfd[myrank], (myrank+p)%nranks, (uint64_t)opId), ret, error);
-     NCCLCHECKGOTO(ncclIpcSocketRecvFd(&ipcSock, &peerfd[(myrank+nranks-p)%nranks]), ret, error);
-   }
 
 int register_user_buffer_collective(void **gpubuff, size_t bytes, communicator *comm, bool alloc) {
   if (comm->free_region > NVTE_MAX_REGIONS)
