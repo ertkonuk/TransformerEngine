@@ -8,12 +8,13 @@
 #define TRANSFORMER_ENGINE_USERBUFFERS_H_
 
 #include <cuda.h>
-#include <mpi.h>  // TODO (tym): Removing will remove PyT extension dependence on MPI
 #include "cuda_runtime.h"
 #include <pthread.h>
 #include <chrono>
 #include "gdrapi.h"
 #include <stdexcept>
+
+#define NCCLBOOTSTRAP
 
 #ifdef NCCLBOOTSTRAP
 #include <nccl.h>
@@ -187,6 +188,7 @@ int create_communicator_grouped( communicator** comm, int pipegpus, int pipenode
 ,ncclComm_t comm_world
 #endif
 );
+
 int create_communicator_grouped2( communicator** comm, int pipegpus, int pipenodes, int tensorgpus, int tensornodes
 #ifdef NCCLBOOTSTRAP
 ,ncclComm_t comm_world

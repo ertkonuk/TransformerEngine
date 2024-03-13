@@ -34,6 +34,7 @@ inline void ub_barrier(MPI_Comm c) {
 }
 #endif
 
+
 static int oob_bcast(void *comm_context, void *buf, int size, int root) {
   MPI_Bcast(buf, size, MPI_BYTE, root,
             (reinterpret_cast<communicator *>(comm_context))->comm_inter);
@@ -93,8 +94,11 @@ int pipe_rank(communicator *comm, int step) {
   return newnode * numlocal + newlocal;
 }
 
-int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenodes, int tensorgpus,
-                                 int tensornodes) {
+int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenodes, int tensorgpus, int tensornodes
+#ifdef NCCLBOOTSTRAP
+,ncclComm_t comm_world
+#endif
+) {
   *comm = reinterpret_cast<communicator *>(malloc(sizeof(communicator)));
 
   int myrank, nranks, cur_dev, ndev;
@@ -162,9 +166,6 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
    		if(strcmp(host_name, host_names[n]) == 0) break;
  	}
 
-  MPI_Comm_split(MPI_COMM_WORLD, color, rank, &(*comm)->comm_intra);
-  // find intranode numbers and make internode communicator
-  // figure out mylocal
   #ifdef NCCLBOOTSTRAP
     cudaFreeHost(host_names);
     ncclCommSplit(comm_world,color,rank,&(*comm)->comm_intra,NULL);
@@ -400,8 +401,7 @@ int create_communicator( communicator** comm
 #ifdef NCCLBOOTSTRAP
 ,comm_world
 #endif
-  );
- }
+); }
 
 void destroy_communicator(communicator *comm) {
   comm->activeproxy = 0;
