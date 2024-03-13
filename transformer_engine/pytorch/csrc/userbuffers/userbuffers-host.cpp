@@ -35,11 +35,6 @@ inline void ub_barrier(MPI_Comm c) {
 #endif
 
 static int oob_bcast(void *comm_context, void *buf, int size, int root) {
-	MPI_Bcast(buf, size, MPI_BYTE, root, ((communicator*)comm_context)->comm_inter);
-	return 0;
-}
-
-static int oob_bcast(void *comm_context, void *buf, int size, int root) {
   MPI_Bcast(buf, size, MPI_BYTE, root,
             (reinterpret_cast<communicator *>(comm_context))->comm_inter);
   return 0;
