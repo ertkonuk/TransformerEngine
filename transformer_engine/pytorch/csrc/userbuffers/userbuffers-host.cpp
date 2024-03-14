@@ -18,8 +18,6 @@
 #include <unistd.h>
 #include <x86intrin.h>
 
-#define NCCLBOOTSTRAP
-
 #ifdef NCCLBOOTSTRAP
 inline void ub_barrier(ncclComm_t c) {
   void* dummy;

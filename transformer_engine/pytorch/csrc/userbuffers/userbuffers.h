@@ -14,8 +14,6 @@
 #include "gdrapi.h"
 #include <stdexcept>
 
-#define NCCLBOOTSTRAP
-
 #ifdef NCCLBOOTSTRAP
 #include <nccl.h>
 #else
