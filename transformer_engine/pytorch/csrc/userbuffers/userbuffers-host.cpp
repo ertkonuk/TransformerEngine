@@ -22,7 +22,7 @@
 inline void ub_barrier(ncclComm_t c) {
   void* dummy;
   cudaMalloc(&dummy,4);
-  ncclAllReduce(dummy,dummy,1, ncclInt, ncclSum, c);
+  ncclAllReduce(dummy,dummy,1, ncclInt, ncclSum, c, 0); //TODO: check the last 0 for cudaStream_t
   cudaDeviceSynchronize();
   cudaFree(dummy);
 }
@@ -177,7 +177,7 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
     cudaFreeHost(host_names);
     ncclCommSplit(comm_world,color,rank,&(*comm)->comm_intra,NULL);
     ncclCommUserRank((*comm)->comm_intra, &mylocal);
-    ncclCommUserCount((*comm)->comm_intra, &numlocal);
+    ncclCommCount((*comm)->comm_intra, &numlocal);
   #else
   	free(host_names);
   	MPI_Comm_split(MPI_COMM_WORLD, color, rank, &(*comm)->comm_intra);
