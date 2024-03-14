@@ -22,7 +22,7 @@
 inline void ub_barrier(ncclComm_t c) {
   void* dummy;
   cudaMalloc(&dummy,4);
-  ncclAllreduce(dummy,dummy,1, ncclInt, ncclSum, c);
+  ncclAllReduce(dummy,dummy,1, ncclInt, ncclSum, c);
   cudaDeviceSynchronize();
   cudaFree(dummy);
 }
@@ -33,23 +33,23 @@ inline void ub_barrier(MPI_Comm c) {
 #endif
 
 
+#ifndef NCCLBOOTSTRAP
 static int oob_bcast(void *comm_context, void *buf, int size, int root) {
   MPI_Bcast(buf, size, MPI_BYTE, root,
             (reinterpret_cast<communicator *>(comm_context))->comm_inter);
   return 0;
 }
-
-static int oob_barrier(void *comm_context) {
-  ub_barrier((reinterpret_cast<communicator *>(comm_context))->comm_inter);
-  return 0;
-}
-
 static int oob_gather(void *comm_context, int root, void *sbuf, void *rbuf, int len) {
   MPI_Gather(sbuf, len, MPI_BYTE, rbuf, len, MPI_BYTE, root,
              (reinterpret_cast<communicator *>(comm_context))->comm_inter);
   return 0;
 }
+#endif
 
+static int oob_barrier(void *comm_context) {
+  ub_barrier((reinterpret_cast<communicator *>(comm_context))->comm_inter);
+  return 0;
+}
 int stringCmp(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
 
 #define CUDACHECK(cmd)                                                                             \
@@ -71,6 +71,15 @@ int stringCmp(const void *a, const void *b) { return strcmp((const char *)a, (co
       exit(EXIT_FAILURE);                                                                          \
     }                                                                                              \
   } while (0);
+
+#define NCCLCHECK(cmd) do {                         \
+  ncclResult_t r = cmd;                             \
+  if (r!= ncclSuccess) {                            \
+    printf("Failed, NCCL error %s:%d ''\n",             \
+        __FILE__,__LINE__/*,ncclGetErrorString(r)*/);   \
+    exit(EXIT_FAILURE);                             \
+  }                                                 \
+} while(0)
 
 #define NVTE_UB_ERROR(x)                                                                           \
   do {                                                                                             \
@@ -104,7 +113,7 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
   #define MPI_MAX_PROCESSOR_NAME 1024
   (*comm)->comm_world=comm_world;
   ncclCommUserRank(comm_world, &myrank);
-  ncclCommUserCount(comm_world, &nranks);
+  ncclCommCount(comm_world, &nranks);
 #else
   MPI_Comm_dup(MPI_COMM_WORLD,&(*comm)->comm_world);
   MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
@@ -144,10 +153,10 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
   bytes = size * sizeof(char[MPI_MAX_PROCESSOR_NAME]);
 
 #ifdef NCCLBOOTSTRAP
-  gethostname(hostname, MPI_MAX_PROCESSOR_NAME);
+  gethostname(host_name, MPI_MAX_PROCESSOR_NAME);
   cudaMallocHost(&host_names,bytes);
   strcpy(host_names[rank], host_name);
-  ncclAllGather(((const void*)host_names)+rank*MPI_MAX_PROCESSOR_NAME, (void*)host_names,MPI_MAX_PROCESSOR_NAME, ncclChar,comm_world);
+  ncclAllGather(((const void*)host_names)+rank*MPI_MAX_PROCESSOR_NAME, (void*)host_names, MPI_MAX_PROCESSOR_NAME, ncclChar,comm_world, 0); // TODO: check the final 0 for cudaStream_t
   cudaDeviceSynchronize();
 #else
  	host_names = (char (*)[MPI_MAX_PROCESSOR_NAME]) malloc(bytes);
