@@ -253,7 +253,7 @@ int create_communicator_grouped2(communicator **comm, int pipegpus, int pipenode
  #ifdef NCCLBOOTSTRAP
    ncclCommSplit(comm_world,mylocal + numlocal * datanodegroup_id,rank,&(*comm)->comm_inter,NULL);
    ncclCommUserRank((*comm)->comm_inter, &my_node);
-   ncclCommUserCount((*comm)->comm_inter, &num_nodes);
+   ncclCommCount((*comm)->comm_inter, &num_nodes);
  #else
  	MPI_Comm_split(MPI_COMM_WORLD, mylocal + numlocal * datanodegroup_id, rank, &(*comm)->comm_inter);
    //different rails from same group are in different subcommunicators
