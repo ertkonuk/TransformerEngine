@@ -8,6 +8,7 @@
 #define TRANSFORMER_ENGINE_USERBUFFERS_H_
 
 #include <cuda.h>
+//#include <mpi.h>  // TODO (tym): Removing will remove PyT extension dependence on MPI
 #include "cuda_runtime.h"
 #include <pthread.h>
 #include <chrono>
@@ -144,16 +145,10 @@ struct communicator {
   int padding2[15];
   volatile int tail;
 
-  #ifdef NOSHARP
-   //MPI_Request mpihndl[NVTE_MAX_SHARP];
-   //MPI_Request mpihndl[MAX_SHARP];
-  #else
-      void *sharphndl[MAX_SHARP];
-  #endif
-
   #ifdef NCCLBOOTSTRAP
       ncclComm_t comm_world,comm_intra,comm_inter;
   #else
+      MPI_Request mpihndl[NVTE_MAX_SHARP];
       MPI_Comm 
       comm_world, //clone of MPI_COMM_WORLD
       comm_inter, //reduction group communicator (subset of the nodes) along GPU rail
@@ -169,30 +164,22 @@ typedef struct communicator communicator;
 
 void producer(void *atomic_ptr, int chunk_i, cudaStream_t stream);
 void consumer(void *atomic_ptr, int chunk_i, cudaStream_t stream);
-
-struct communicator {
- };
- typedef struct communicator communicator;
- 
 int create_communicator( communicator** comm
 #ifdef NCCLBOOTSTRAP
 ,ncclComm_t comm_world
 #endif
 );
-
 /*  creates communicator, allocates all internal buffers if necessary */
-int create_communicator_grouped( communicator** comm, int pipegpus, int pipenodes
+int create_communicator_grouped(communicator** comm, int pipegpus, int pipenodes
 #ifdef NCCLBOOTSTRAP
 ,ncclComm_t comm_world
 #endif
 );
-
-int create_communicator_grouped2( communicator** comm, int pipegpus, int pipenodes, int tensorgpus, int tensornodes
+int create_communicator_grouped2(communicator** comm, int pipegpus, int pipenodes, int tensorgpus, int tensornodes
 #ifdef NCCLBOOTSTRAP
 ,ncclComm_t comm_world
 #endif
 );
-
 /*  creates communicator with
     allreduce1 to happen in datagpus x datanodes groups,
     allreduce2 to happen in tensorgpus x tensor nodes,
