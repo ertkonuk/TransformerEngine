@@ -502,7 +502,7 @@ int register_user_buffer_collective(void **gpubuff, size_t bytes, communicator *
   }
   assert(comm->nvsize <= 8);
   cudaIpcMemHandle_t *memhndl = reinterpret_cast<cudaIpcMemHandle_t *>(malloc(sizeof(cudaIpcMemHandle_t) * (comm->nvsize)));
-
+  cudaIpcMemHandle_t myhndl;
   CUDACHECK(cudaIpcGetMemHandle(&memhndl[comm->nvrank], *gpubuff));
   ub_alloc_copy_allgather((void **)&memhndl, sizeof(cudaIpcMemHandle_t), (void *)&myhndl, comm->comm_intra);
   
