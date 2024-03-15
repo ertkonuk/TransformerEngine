@@ -493,6 +493,8 @@ def setup_pytorch_extension() -> setuptools.Extension:
             include_dirs.append(mpi_home / "include")
         cxx_flags.append("-DNVTE_WITH_USERBUFFERS")
         nvcc_flags.append("-DNVTE_WITH_USERBUFFERS")
+        cxx_flags.append("-DNCCLBOOTSTRAP")
+        nvcc_flags.append("-DNCCLBOOTSTRAP")
 
     # Construct PyTorch CUDA extension
     sources = [str(path) for path in sources]
